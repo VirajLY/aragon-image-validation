@@ -1,0 +1,59 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model UploadSession {
+  id             String        @id @default(uuid())
+  status         String        @default("UPLOADING")
+  totalImages    Int           @default(0) @map("total_images")
+  acceptedCount  Int           @default(0) @map("accepted_count")
+  rejectedCount  Int           @default(0) @map("rejected_count")
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  images         Image[]
+
+  @@map("upload_sessions")
+}
+
+model Image {
+  id               String             @id @default(uuid())
+  sessionId        String             @map("session_id")
+  originalFilename String             @map("original_filename")
+  storageKey       String             @map("storage_key")
+  thumbnailKey     String?            @map("thumbnail_key")
+  mimeType         String             @map("mime_type")
+  fileSizeBytes    Int                @map("file_size_bytes")
+  width            Int?
+  height           Int?
+  perceptualHash   String?            @map("perceptual_hash")
+  status           String             @default("PENDING")
+  rejectionReason  String?            @map("rejection_reason")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  session          UploadSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  validationResults ValidationResult[]
+
+  @@index([sessionId])
+  @@index([status])
+  @@index([perceptualHash])
+  @@map("images")
+}
+
+model ValidationResult {
+  id        String         @id @default(uuid())
+  imageId   String         @map("image_id")
+  rule      String
+  passed    Boolean
+  message   String?
+  metadata  String?
+  createdAt DateTime       @default(now()) @map("created_at")
+  image     Image          @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@index([imageId])
+  @@map("validation_results")
+}
