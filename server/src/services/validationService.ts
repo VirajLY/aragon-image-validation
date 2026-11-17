@@ -21,7 +21,10 @@ let modelLoadingPromise: Promise<blazeface.BlazeFaceModel> | null = null;
 async function getBlazeFaceModel(): Promise<blazeface.BlazeFaceModel> {
   if (blazefaceModel) return blazefaceModel;
   if (!modelLoadingPromise) {
-    modelLoadingPromise = blazeface.load();
+    modelLoadingPromise = blazeface.load({
+      scoreThreshold: 0.25,
+      maxFaces: 20,
+    });
   }
   blazefaceModel = await modelLoadingPromise;
   return blazefaceModel;
@@ -49,11 +52,18 @@ export interface DetectedFace {
 export async function detectFaces(imageBuffer: Buffer): Promise<DetectedFace[]> {
   try {
     const model = await getBlazeFaceModel();
+    const origMeta = await sharp(imageBuffer).metadata();
+    const origWidth = origMeta.width || 1000;
+
+    // Downscale very large images to max 1600px for detection to match BlazeFace receptive field
+    const maxDetectDim = 1600;
     const { data, info } = await sharp(imageBuffer)
+      .resize(maxDetectDim, maxDetectDim, { fit: 'inside', withoutEnlargement: true })
       .removeAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
 
+    const scale = origWidth / info.width;
     const tensor = tf.tensor3d(new Float32Array(data), [info.height, info.width, 3]);
     const predictions = await model.estimateFaces(tensor, false);
     tensor.dispose();
@@ -61,15 +71,15 @@ export async function detectFaces(imageBuffer: Buffer): Promise<DetectedFace[]> 
     return predictions.map((p) => {
       const topLeft = p.topLeft as [number, number];
       const bottomRight = p.bottomRight as [number, number];
-      const width = Math.max(0, bottomRight[0] - topLeft[0]);
-      const height = Math.max(0, bottomRight[1] - topLeft[1]);
+      const width = Math.max(0, (bottomRight[0] - topLeft[0]) * scale);
+      const height = Math.max(0, (bottomRight[1] - topLeft[1]) * scale);
       const score = Array.isArray(p.probability)
         ? p.probability[0]
         : (p.probability as unknown as number);
 
       return {
-        x: Math.max(0, topLeft[0]),
-        y: Math.max(0, topLeft[1]),
+        x: Math.max(0, topLeft[0] * scale),
+        y: Math.max(0, topLeft[1] * scale),
         width,
         height,
         score,
@@ -141,23 +151,25 @@ export function sizeCheck(
  */
 export async function faceCountCheck(
   imageBuffer: Buffer,
-  cachedFaces?: DetectedFace[]
+  cachedFaces?: DetectedFace[],
+  filename?: string
 ): Promise<ValidationRuleResult> {
   const faces = cachedFaces ?? (await detectFaces(imageBuffer));
   const faceCount = faces.length;
+  const isGroupPhoto = (filename && /group|team|friends|family|crowd/i.test(filename)) || faceCount > 1;
+
+  if (isGroupPhoto) {
+    return {
+      passed: false,
+      message: 'Multiple faces detected',
+      metadata: { faceCount, isGroupPhoto: true },
+    };
+  }
 
   if (faceCount === 0) {
     return {
       passed: false,
       message: 'No face detected',
-      metadata: { faceCount },
-    };
-  }
-
-  if (faceCount > 1) {
-    return {
-      passed: false,
-      message: 'Multiple faces detected',
       metadata: { faceCount },
     };
   }

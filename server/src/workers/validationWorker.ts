@@ -125,7 +125,7 @@ export async function processValidationJob(imageId: string, sessionId: string): 
     },
     {
       rule: 'NO_FACE',
-      execute: () => validationService.faceCountCheck(imageBuffer, detectedFaces),
+      execute: () => validationService.faceCountCheck(imageBuffer, detectedFaces, image.originalFilename),
     },
     {
       rule: 'FACE_TOO_SMALL',
