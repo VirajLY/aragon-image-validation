@@ -70,7 +70,8 @@ export async function compressImage(
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     }
     const inputBuffer = Buffer.concat(chunks);
-    const originalSize = inputBuffer.length;
+    // True original size from the uploaded file on disk, falling back to input buffer
+    const originalSize = image.fileSizeBytes || inputBuffer.length;
 
     // 2. Compress with Sharp using MozJPEG configuration
     // Quality 82 provides 40-70% file size reduction with virtually imperceptible difference

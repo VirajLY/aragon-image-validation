@@ -14,19 +14,19 @@ export const VARIANT_DEFINITIONS: VariantDefinition[] = [
   {
     type: 'THUMBNAIL',
     maxDimension: 250,
-    quality: 80,
+    quality: 75,
     fit: 'cover',
   },
   {
     type: 'WEB',
     maxDimension: 1200,
-    quality: 85,
+    quality: 78,
     fit: 'inside',
   },
   {
     type: 'FULL',
     maxDimension: 2048,
-    quality: 90,
+    quality: 82,
     fit: 'inside',
   },
 ];
@@ -105,26 +105,37 @@ export async function generateVariants(
     }
     const sourceBuffer = Buffer.concat(chunks);
 
+    const sourceMeta = await sharp(sourceBuffer).metadata();
+    const sourceWidth = sourceMeta.width ?? 0;
+    const sourceHeight = sourceMeta.height ?? 0;
+
     // 2. Generate variants in parallel
     const generatedVariants: VariantResultItem[] = await Promise.all(
       VARIANT_DEFINITIONS.map(async (def) => {
-        let pipeline = sharp(sourceBuffer);
+        let variantBuffer: Buffer;
 
-        if (def.type === 'THUMBNAIL') {
-          pipeline = pipeline.resize(def.maxDimension, def.maxDimension, {
-            fit: def.fit,
-            position: 'center',
-          });
+        if (def.type === 'FULL' && sourceWidth <= def.maxDimension && sourceHeight <= def.maxDimension) {
+          // If the source image is already within FULL dimension bounds, use the compressed master directly
+          variantBuffer = sourceBuffer;
         } else {
-          pipeline = pipeline.resize(def.maxDimension, def.maxDimension, {
-            fit: def.fit,
-            withoutEnlargement: true,
-          });
-        }
+          let pipeline = sharp(sourceBuffer);
 
-        const variantBuffer = await pipeline
-          .jpeg({ quality: def.quality, progressive: true })
-          .toBuffer();
+          if (def.type === 'THUMBNAIL') {
+            pipeline = pipeline.resize(def.maxDimension, def.maxDimension, {
+              fit: def.fit,
+              position: 'center',
+            });
+          } else {
+            pipeline = pipeline.resize(def.maxDimension, def.maxDimension, {
+              fit: def.fit,
+              withoutEnlargement: true,
+            });
+          }
+
+          variantBuffer = await pipeline
+            .jpeg({ quality: def.quality, progressive: true, mozjpeg: true })
+            .toBuffer();
+        }
 
         const meta = await sharp(variantBuffer).metadata();
         const width = meta.width ?? 0;
