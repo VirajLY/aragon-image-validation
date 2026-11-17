@@ -1,4 +1,6 @@
 import sharp from 'sharp';
+// @ts-ignore
+import heicDecode from 'heic-decode';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import prisma from '../lib/prisma';
@@ -58,8 +60,26 @@ export async function processAndStore(
   let finalMime = detectedMime;
 
   // 2. Convert HEIC/HEIF to JPEG
-  if (detectedMime === 'image/heic' || detectedMime === 'image/heif') {
-    processedBuffer = await sharp(file.buffer).jpeg({ quality: 90 }).toBuffer();
+  if (
+    detectedMime === 'image/heic' ||
+    detectedMime === 'image/heif' ||
+    file.originalname.toLowerCase().endsWith('.heic') ||
+    file.originalname.toLowerCase().endsWith('.heif')
+  ) {
+    try {
+      processedBuffer = await sharp(file.buffer).jpeg({ quality: 90 }).toBuffer();
+    } catch {
+      try {
+        const { data, width: w, height: h } = await heicDecode({ buffer: file.buffer });
+        processedBuffer = await sharp(Buffer.from(data), {
+          raw: { width: w, height: h, channels: 4 },
+        })
+          .jpeg({ quality: 90 })
+          .toBuffer();
+      } catch (heicErr: any) {
+        throw new BadRequestError(`Failed to decode HEIC file: ${heicErr.message || 'corrupt bitstream'}`);
+      }
+    }
     finalMime = 'image/jpeg';
   }
 

@@ -1,4 +1,6 @@
 import sharp from 'sharp';
+// @ts-ignore
+import heicDecode from 'heic-decode';
 import prisma from '../lib/prisma';
 import * as storageService from './storageService';
 import { publishEvent } from '../utils/sse';
@@ -67,15 +69,46 @@ export async function convertImage(
       throw new Error('Retrieved image buffer is empty');
     }
 
-    // 2. Normalize image with Sharp
+    // 2. Normalize image into standard JPEG
+    // - Explicitly handles HEIC/HEIF -> JPEG (via Sharp native libheif or heic-decode fallback)
     // - .rotate() auto-rotates based on EXIF orientation
     // - .toColorspace('srgb') normalizes color profile
-    // - .jpeg({ quality: 95 }) ensures high fidelity baseline
-    const normalizedBuffer = await sharp(rawBuffer, { failOn: 'none' })
-      .rotate()
-      .toColorspace('srgb')
-      .jpeg({ quality: 95, mozjpeg: true })
-      .toBuffer();
+    // - .jpeg({ quality: 95, mozjpeg: true }) ensures high fidelity baseline
+    const isHeic =
+      image.mimeType === 'image/heic' ||
+      image.mimeType === 'image/heif' ||
+      image.originalFilename.toLowerCase().endsWith('.heic') ||
+      image.originalFilename.toLowerCase().endsWith('.heif') ||
+      rawBuffer.slice(4, 12).toString().includes('ftypheic') ||
+      rawBuffer.slice(4, 12).toString().includes('ftypmif1');
+
+    let normalizedBuffer: Buffer;
+
+    try {
+      normalizedBuffer = await sharp(rawBuffer, { failOn: 'none' })
+        .rotate()
+        .toColorspace('srgb')
+        .jpeg({ quality: 95, mozjpeg: true })
+        .toBuffer();
+    } catch (sharpErr: any) {
+      if (isHeic) {
+        console.log(`ℹ️ [Conversion Service] Decoding HEIC/HEIF via heic-decode for image ${imageId}`);
+        try {
+          const { data, width, height } = await heicDecode({ buffer: rawBuffer });
+          normalizedBuffer = await sharp(Buffer.from(data), {
+            raw: { width, height, channels: 4 },
+          })
+            .rotate()
+            .toColorspace('srgb')
+            .jpeg({ quality: 95, mozjpeg: true })
+            .toBuffer();
+        } catch (heicErr: any) {
+          throw new Error(`HEIC decoding failed: ${heicErr.message || 'corrupt or unsupported HEIC file'}`);
+        }
+      } else {
+        throw sharpErr;
+      }
+    }
 
     const metadata = await sharp(normalizedBuffer).metadata();
     const width = metadata.width ?? image.width ?? 0;
