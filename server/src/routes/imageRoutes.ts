@@ -15,6 +15,12 @@ router.get('/sessions/:id/images', controller.getSessionImages);
 router.get('/sessions/:id/images/:imageId', controller.getImage);
 router.delete('/sessions/:id/images/:imageId', controller.deleteImage);
 
+// Pipeline Status & Variants endpoints (Part 2)
+router.get('/images/:id/status', controller.getImageStatus);
+router.get('/images/:id', controller.getImageStatus);
+router.post('/images/:id/reprocess', controller.reprocess);
+router.get('/images/:id/variants/:type', controller.serveVariantFile);
+
 // Image asset file delivery endpoint
 router.get('/images/:id/file', controller.serveImageFile);
 

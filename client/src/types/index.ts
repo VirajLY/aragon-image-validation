@@ -1,5 +1,13 @@
 export type ImageStatus = 'PENDING' | 'PROCESSING' | 'ACCEPTED' | 'REJECTED';
 export type SessionStatus = 'UPLOADING' | 'PROCESSING' | 'COMPLETED';
+export type PipelineStatus =
+  | 'PENDING'
+  | 'CONVERTING'
+  | 'COMPRESSING'
+  | 'GENERATING_VARIANTS'
+  | 'READY'
+  | 'FAILED';
+
 export type ValidationRule =
   | 'FORMAT'
   | 'SIZE'
@@ -19,6 +27,20 @@ export interface ValidationResult {
   metadata: Record<string, unknown> | null;
 }
 
+export interface ImageVariant {
+  id: string;
+  imageId: string;
+  type: 'THUMBNAIL' | 'WEB' | 'FULL';
+  storageKey: string;
+  url: string;
+  directUrl?: string;
+  width: number;
+  height: number;
+  fileSizeBytes: number;
+  format: string;
+  createdAt: string;
+}
+
 export interface UploadImage {
   id: string;
   sessionId: string;
@@ -31,6 +53,17 @@ export interface UploadImage {
   height: number | null;
   status: ImageStatus;
   rejectionReason: string | null;
+  
+  // Media processing pipeline fields
+  pipelineStatus?: PipelineStatus;
+  pipelineStage?: string | null;
+  pipelineError?: string | null;
+  originalSize?: number | null;
+  compressedSize?: number | null;
+  compressionRatio?: number | null;
+  convertedFormat?: string | null;
+  variants?: ImageVariant[];
+
   createdAt: string;
   validationResults: ValidationResult[];
 }
@@ -57,13 +90,30 @@ export interface LocalFile {
 }
 
 export interface SSEEvent {
-  type: 'image:validated' | 'session:completed';
+  type:
+    | 'image:validated'
+    | 'image:accepted'
+    | 'image:rejected'
+    | 'session:completed'
+    | 'pipeline:converting'
+    | 'pipeline:compressing'
+    | 'pipeline:generating_variants'
+    | 'pipeline:ready'
+    | 'pipeline:failed';
   data: {
     imageId?: string;
-    status?: ImageStatus;
+    status?: ImageStatus | PipelineStatus;
+    stage?: string;
     rejectionReason?: string;
+    error?: string;
     sessionId?: string;
     acceptedCount?: number;
     rejectedCount?: number;
+    variants?: ImageVariant[];
+    metrics?: {
+      originalSize?: number;
+      compressedSize?: number;
+      compressionRatio?: number;
+    };
   };
 }

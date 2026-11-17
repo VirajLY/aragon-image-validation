@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import { redis } from '../lib/redis';
 import * as storageService from '../services/storageService';
 import * as validationService from '../services/validationService';
+import { startPipeline } from '../services/pipelineManager';
 import { publishEvent } from '../utils/sse';
 
 export type ValidationRule =
@@ -221,6 +222,9 @@ export async function processValidationJob(imageId: string, sessionId: string): 
       where: { id: sessionId },
       data: { acceptedCount: { increment: 1 } },
     });
+
+    // Enter media processing pipeline automatically upon passing validation
+    await startPipeline(imageId);
   } else {
     await prisma.uploadSession.update({
       where: { id: sessionId },

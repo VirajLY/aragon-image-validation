@@ -42,6 +42,21 @@ export async function getSession(sessionId: string): Promise<UploadSession> {
   return data;
 }
 
+export async function getImageStatus(imageId: string): Promise<any> {
+  const { data } = await api.get(`/images/${imageId}/status`);
+  return data;
+}
+
+export async function reprocessImage(
+  imageId: string,
+  simulateFailure?: 'conversion' | 'compression' | 'variant'
+): Promise<any> {
+  const { data } = await api.post(`/images/${imageId}/reprocess`, {
+    simulateFailure,
+  });
+  return data;
+}
+
 export async function deleteImage(
   sessionId: string,
   imageId: string,
@@ -51,4 +66,8 @@ export async function deleteImage(
 
 export function getImageUrl(imageId: string, thumbnail = false): string {
   return `/api/images/${imageId}/file${thumbnail ? '?thumbnail=true' : ''}`;
+}
+
+export function getVariantUrl(imageId: string, type: 'thumbnail' | 'web' | 'full'): string {
+  return `/api/images/${imageId}/variants/${type}`;
 }

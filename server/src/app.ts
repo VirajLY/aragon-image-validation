@@ -8,6 +8,7 @@ import { errorHandler } from './middleware/errorHandler';
 import { initBucket } from './services/storageService';
 import { initSSESubscriber } from './utils/sse';
 import { createValidationWorker } from './workers/validationWorker';
+import { initPipelineWorkers } from './services/pipelineManager';
 
 const app = express();
 
@@ -64,8 +65,9 @@ async function startServer(): Promise<void> {
     // 2. Initialize SSE pub/sub subscriber
     initSSESubscriber();
 
-    // 3. Initialize BullMQ validation worker (if Redis available)
+    // 3. Initialize BullMQ workers (if Redis available)
     createValidationWorker();
+    initPipelineWorkers();
 
     // 4. Start HTTP Server
     const port = config.PORT || 3001;

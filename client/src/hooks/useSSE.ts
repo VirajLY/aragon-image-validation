@@ -1,15 +1,14 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useUploadStore } from '../stores/uploadStore';
 import { getSession } from '../lib/api';
-import type { ImageStatus } from '../types';
+import type { ImageStatus, PipelineStatus, ImageVariant } from '../types';
 
 /**
  * Opens an EventSource to `/api/sessions/:id/events` and keeps the
- * Zustand store in sync with server-sent validation results.
+ * Zustand store in sync with server-sent validation results and media pipeline stages.
  */
 export function useSSE(): void {
   const sessionId = useUploadStore((s) => s.sessionId);
-  const isProcessing = useUploadStore((s) => s.isProcessing);
   const updateImage = useUploadStore((s) => s.updateImage);
   const updateCounts = useUploadStore((s) => s.updateCounts);
   const setProcessing = useUploadStore((s) => s.setProcessing);
@@ -28,7 +27,8 @@ export function useSSE(): void {
     const es = new EventSource(`/api/sessions/${sessionId}/events`);
     sourceRef.current = es;
 
-    const handleImageUpdate = (e: MessageEvent) => {
+    // 1. Image validation status updates
+    const handleValidationUpdate = (e: MessageEvent) => {
       try {
         const payload = JSON.parse(e.data) as {
           imageId: string;
@@ -41,39 +41,83 @@ export function useSSE(): void {
           rejectionReason: payload.rejectionReason ?? null,
         });
 
-        // Refresh full session to get accurate counts
-        getSession(sessionId).then((session) => {
-          setImages(session.images);
-          updateCounts(session.acceptedCount, session.rejectedCount);
-        }).catch(() => {
-          // Silently ignore – SSE event already updated the image
-        });
+        getSession(sessionId)
+          .then((session) => {
+            setImages(session.images);
+            updateCounts(session.acceptedCount, session.rejectedCount);
+          })
+          .catch(() => {});
       } catch {
         // Malformed event – ignore
       }
     };
 
-    es.addEventListener('image:validated', handleImageUpdate);
-    es.addEventListener('image:accepted', handleImageUpdate);
-    es.addEventListener('image:rejected', handleImageUpdate);
+    es.addEventListener('image:validated', handleValidationUpdate);
+    es.addEventListener('image:accepted', handleValidationUpdate);
+    es.addEventListener('image:rejected', handleValidationUpdate);
 
+    // 2. Media processing pipeline stage updates (Part 2)
+    const handlePipelineStage = (stageName: string, status: PipelineStatus) => (e: MessageEvent) => {
+      try {
+        const payload = JSON.parse(e.data) as {
+          imageId: string;
+          stage?: string;
+          status?: PipelineStatus;
+          error?: string;
+          variants?: ImageVariant[];
+          metrics?: {
+            originalSize?: number;
+            compressedSize?: number;
+            compressionRatio?: number;
+          };
+        };
+
+        updateImage(payload.imageId, {
+          pipelineStatus: status,
+          pipelineStage: payload.stage || stageName,
+          pipelineError: payload.error || null,
+          variants: payload.variants,
+          originalSize: payload.metrics?.originalSize,
+          compressedSize: payload.metrics?.compressedSize,
+          compressionRatio: payload.metrics?.compressionRatio,
+        });
+
+        if (status === 'READY' || status === 'FAILED') {
+          getSession(sessionId)
+            .then((session) => {
+              setImages(session.images);
+            })
+            .catch(() => {});
+        }
+      } catch {
+        // Malformed event – ignore
+      }
+    };
+
+    es.addEventListener('pipeline:converting', handlePipelineStage('Conversion Service', 'CONVERTING'));
+    es.addEventListener('pipeline:compressing', handlePipelineStage('Compression Service', 'COMPRESSING'));
+    es.addEventListener('pipeline:generating_variants', handlePipelineStage('Variant Generation Service', 'GENERATING_VARIANTS'));
+    es.addEventListener('pipeline:ready', handlePipelineStage('Completed', 'READY'));
+    es.addEventListener('pipeline:failed', handlePipelineStage('Failed', 'FAILED'));
+
+    // 3. Session completion
     es.addEventListener('session:completed', () => {
       setProcessing(false);
       showToastMessage(
-        'Your photos have been successfully uploaded!',
+        'Your photos have been successfully uploaded & verified!',
         'success',
       );
 
-      // Final refresh
-      getSession(sessionId).then((session) => {
-        setImages(session.images);
-        updateCounts(session.acceptedCount, session.rejectedCount);
-      }).catch(() => { /* noop */ });
+      getSession(sessionId)
+        .then((session) => {
+          setImages(session.images);
+          updateCounts(session.acceptedCount, session.rejectedCount);
+        })
+        .catch(() => {});
     });
 
     es.onerror = () => {
       es.close();
-      // Reconnect after 3 seconds
       reconnectTimerRef.current = setTimeout(() => {
         connect();
       }, 3_000);
@@ -81,7 +125,7 @@ export function useSSE(): void {
   }, [sessionId, updateImage, updateCounts, setProcessing, setImages, showToastMessage]);
 
   useEffect(() => {
-    if (sessionId && isProcessing) {
+    if (sessionId) {
       connect();
     }
 
@@ -91,5 +135,5 @@ export function useSSE(): void {
         clearTimeout(reconnectTimerRef.current);
       }
     };
-  }, [sessionId, isProcessing, connect]);
+  }, [sessionId, connect]);
 }

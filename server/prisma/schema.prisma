@@ -31,15 +31,28 @@ model Image {
   width            Int?
   height           Int?
   perceptualHash   String?            @map("perceptual_hash")
-  status           String             @default("PENDING")
+  status           String             @default("PENDING") // PENDING | PROCESSING | ACCEPTED | REJECTED
   rejectionReason  String?            @map("rejection_reason")
+  
+  // Pipeline processing fields
+  pipelineStatus   String             @default("PENDING") @map("pipeline_status") // PENDING | CONVERTING | COMPRESSING | GENERATING_VARIANTS | READY | FAILED
+  pipelineStage    String?            @map("pipeline_stage")
+  pipelineError    String?            @map("pipeline_error")
+  originalSize     Int?               @map("original_size")
+  compressedSize   Int?               @map("compressed_size")
+  compressionRatio Float?             @map("compression_ratio")
+  convertedFormat  String?            @map("converted_format")
+
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
+  
   session          UploadSession      @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   validationResults ValidationResult[]
+  variants         ImageVariant[]
 
   @@index([sessionId])
   @@index([status])
+  @@index([pipelineStatus])
   @@index([perceptualHash])
   @@map("images")
 }
@@ -56,4 +69,23 @@ model ValidationResult {
 
   @@index([imageId])
   @@map("validation_results")
+}
+
+model ImageVariant {
+  id            String   @id @default(uuid())
+  imageId       String   @map("image_id")
+  type          String   // THUMBNAIL | WEB | FULL
+  storageKey    String   @map("storage_key")
+  url           String
+  width         Int
+  height        Int
+  fileSizeBytes Int      @map("file_size_bytes")
+  format        String
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  image         Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@unique([imageId, type])
+  @@index([imageId])
+  @@map("image_variants")
 }

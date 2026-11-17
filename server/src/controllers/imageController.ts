@@ -3,6 +3,7 @@ import prisma from '../lib/prisma';
 import * as imageService from '../services/imageService';
 import * as storageService from '../services/storageService';
 import { enqueueValidation } from '../lib/queue';
+import { reprocessImage as triggerReprocess } from '../services/pipelineManager';
 import { addClient } from '../utils/sse';
 import { NotFoundError, BadRequestError } from '../errors/AppError';
 
@@ -24,7 +25,7 @@ export async function createSession(_req: Request, res: Response): Promise<void>
 }
 
 /**
- * Gets details of an upload session including all images and their validation results.
+ * Gets details of an upload session including all images, validation results, and variants.
  * GET /api/sessions/:id
  */
 export async function getSession(req: Request, res: Response): Promise<void> {
@@ -36,6 +37,7 @@ export async function getSession(req: Request, res: Response): Promise<void> {
       images: {
         include: {
           validationResults: true,
+          variants: true,
         },
         orderBy: { createdAt: 'desc' },
       },
@@ -87,11 +89,10 @@ export async function uploadImages(req: Request, res: Response): Promise<void> {
       const imageRecord = await imageService.processAndStore(file, sessionId);
       processedImages.push(imageRecord);
 
-      // Enqueue for async validation
+      // Enqueue for async validation (which automatically feeds media pipeline if accepted)
       await enqueueValidation(imageRecord.id, sessionId);
     } catch (err: any) {
       console.error(`Failed to process upload for ${file.originalname}:`, err);
-      // If error is BadRequestError (e.g. invalid format), continue or report
       throw err;
     }
   }
@@ -109,7 +110,7 @@ export async function uploadImages(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * Lists all images for a session.
+ * Lists all images for a session including validation and variants.
  * GET /api/sessions/:id/images
  */
 export async function getSessionImages(req: Request, res: Response): Promise<void> {
@@ -119,6 +120,7 @@ export async function getSessionImages(req: Request, res: Response): Promise<voi
     where: { sessionId },
     include: {
       validationResults: true,
+      variants: true,
     },
     orderBy: { createdAt: 'desc' },
   });
@@ -127,7 +129,7 @@ export async function getSessionImages(req: Request, res: Response): Promise<voi
 }
 
 /**
- * Gets a single image by ID.
+ * Gets a single image with variants and validation results.
  * GET /api/sessions/:id/images/:imageId
  */
 export async function getImage(req: Request, res: Response): Promise<void> {
@@ -140,6 +142,7 @@ export async function getImage(req: Request, res: Response): Promise<void> {
     },
     include: {
       validationResults: true,
+      variants: true,
     },
   });
 
@@ -148,6 +151,111 @@ export async function getImage(req: Request, res: Response): Promise<void> {
   }
 
   res.json(image);
+}
+
+/**
+ * Retrieves the processing status, metrics, and variants for an image.
+ * GET /api/images/:id/status
+ */
+export async function getImageStatus(req: Request, res: Response): Promise<void> {
+  const { id } = req.params;
+
+  const image = await prisma.image.findUnique({
+    where: { id },
+    include: {
+      validationResults: true,
+      variants: true,
+    },
+  });
+
+  if (!image) {
+    throw new NotFoundError(`Image ${id} not found`);
+  }
+
+  res.json({
+    id: image.id,
+    sessionId: image.sessionId,
+    originalFilename: image.originalFilename,
+    status: image.status,
+    rejectionReason: image.rejectionReason,
+    pipeline: {
+      status: image.pipelineStatus,
+      stage: image.pipelineStage,
+      error: image.pipelineError,
+      metrics: {
+        originalSize: image.originalSize,
+        compressedSize: image.compressedSize,
+        compressionRatio: image.compressionRatio ? `${image.compressionRatio}%` : null,
+        compressionRatioNum: image.compressionRatio,
+        convertedFormat: image.convertedFormat,
+      },
+    },
+    variants: image.variants.map((v) => ({
+      id: v.id,
+      type: v.type,
+      url: v.url,
+      directUrl: `/api/images/${image.id}/variants/${v.type.toLowerCase()}`,
+      width: v.width,
+      height: v.height,
+      fileSizeBytes: v.fileSizeBytes,
+      format: v.format,
+      createdAt: v.createdAt,
+    })),
+  });
+}
+
+/**
+ * Reprocesses an image through the media processing pipeline.
+ * POST /api/images/:id/reprocess
+ */
+export async function reprocess(req: Request, res: Response): Promise<void> {
+  const { id } = req.params;
+  const { simulateFailure } = req.body || {};
+
+  const image = await prisma.image.findUnique({
+    where: { id },
+  });
+
+  if (!image) {
+    throw new NotFoundError(`Image ${id} not found`);
+  }
+
+  await triggerReprocess(id, { simulateFailure });
+
+  res.status(200).json({
+    message: `Reprocessing initiated for image ${id}`,
+    imageId: id,
+    simulateFailure: simulateFailure || null,
+  });
+}
+
+/**
+ * Streams a specific generated variant file (thumbnail, web, full).
+ * GET /api/images/:id/variants/:type
+ */
+export async function serveVariantFile(req: Request, res: Response): Promise<void> {
+  const { id: imageId, type } = req.params;
+  const variantType = type.toUpperCase();
+
+  const variant = await prisma.imageVariant.findFirst({
+    where: {
+      imageId,
+      type: variantType,
+    },
+  });
+
+  if (!variant) {
+    throw new NotFoundError(`Variant ${variantType} not found for image ${imageId}`);
+  }
+
+  try {
+    const stream = await storageService.getFileStream(variant.storageKey);
+    res.setHeader('Content-Type', `image/${variant.format}`);
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    stream.pipe(res);
+  } catch (err: any) {
+    res.status(404).json({ error: 'Variant file not found in storage' });
+  }
 }
 
 /**
