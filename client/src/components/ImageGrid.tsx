@@ -164,9 +164,13 @@ export default function ImageGrid({
                         <CheckCircle2 className="h-3 w-3 text-emerald-600 shrink-0" />
                         <span>3 Variants Ready</span>
                       </span>
-                      {img.compressionRatio && (
-                        <span className="text-[10px] text-emerald-600 font-bold">
-                          -{img.compressionRatio}%
+                      {typeof img.compressionRatio === 'number' && (
+                        <span
+                          className={`text-[10px] font-bold ${
+                            img.compressionRatio > 0 ? 'text-emerald-600' : 'text-blue-600'
+                          }`}
+                        >
+                          {img.compressionRatio > 0 ? `-${img.compressionRatio}%` : 'Optimal'}
                         </span>
                       )}
                     </button>
@@ -234,9 +238,17 @@ export default function ImageGrid({
                       </strong>
                     </span>
                   )}
-                  {selectedImage.compressionRatio && (
-                    <span className="rounded bg-emerald-100 text-emerald-800 px-1.5 py-0.5 font-bold">
-                      Saved {selectedImage.compressionRatio}%
+                  {typeof selectedImage.compressionRatio === 'number' && (
+                    <span
+                      className={`rounded px-1.5 py-0.5 font-bold ${
+                        selectedImage.compressionRatio > 0
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-blue-100 text-blue-800'
+                      }`}
+                    >
+                      {selectedImage.compressionRatio > 0
+                        ? `Saved ${selectedImage.compressionRatio}%`
+                        : 'Already Optimized'}
                     </span>
                   )}
                 </div>

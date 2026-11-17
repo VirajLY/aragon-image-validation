@@ -75,7 +75,7 @@ export async function compressImage(
 
     // 2. Compress with Sharp using MozJPEG configuration
     // Quality 82 provides 40-70% file size reduction with virtually imperceptible difference
-    const compressedBuffer = await sharp(inputBuffer)
+    let compressedBuffer = await sharp(inputBuffer)
       .jpeg({
         quality: 82,
         progressive: true,
@@ -84,6 +84,27 @@ export async function compressImage(
         overshootDeringing: true,
       })
       .toBuffer();
+
+    // Optimization Guard: If re-encoding at Q82 causes file size expansion (pre-compressed input),
+    // adaptively step down to Q78 to achieve real byte savings while maintaining high visual fidelity.
+    if (compressedBuffer.length >= originalSize) {
+      const stepDownBuffer = await sharp(inputBuffer)
+        .jpeg({
+          quality: 78,
+          progressive: true,
+          mozjpeg: true,
+          trellisQuantisation: true,
+          overshootDeringing: true,
+        })
+        .toBuffer();
+
+      if (stepDownBuffer.length < originalSize) {
+        compressedBuffer = stepDownBuffer;
+      } else {
+        // Passthrough Guard: If the image was already hyper-optimized, never output a larger file
+        compressedBuffer = inputBuffer;
+      }
+    }
 
     const compressedSize = compressedBuffer.length;
     // Calculate percentage reduction: e.g. 100KB -> 40KB is 60% reduction
